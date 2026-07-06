@@ -1,4 +1,4 @@
-# ─── External Secrets Operator (ESO) IRSA Role ─────────────────────────────
+# ─── External Secrets Operator (ESO) IRSA Role
 # Allows ESO to read secrets from AWS Secrets Manager
 
 data "aws_iam_policy_document" "eso_assume_role" {
