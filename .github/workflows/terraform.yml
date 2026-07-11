@@ -34,7 +34,7 @@ permissions:
 env:
   TF_VERSION: '1.15.6'
   AWS_REGION: us-east-1
-  TF_STATE_BUCKET: zen-pharma-terraform-state-dpp-2026
+  TF_STATE_BUCKET: zen-pharma-terraform-state-imwahidshaikh
 
 # Prevent parallel runs on the same branch — avoids state conflicts
 concurrency:
@@ -84,7 +84,7 @@ jobs:
           terraform plan \
             -var="db_password=${{ secrets.DEV_DB_PASSWORD }}" \
             -var="jwt_secret=${{ secrets.DEV_JWT_SECRET }}" \
-            -var="github_org=DPP-2026" \
+            -var="github_org=imwahidshaikh" \
             -out=tfplan \
             -no-color
         continue-on-error: true
