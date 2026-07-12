@@ -11,7 +11,7 @@ variable "jwt_secret" {
 }
 
 variable "github_org" {
-  description = "GitHub username or organization that owns frontend and backend"
+  description = "go4rom"
   type        = string
-  default     = "DPP-2026"
+  default     = "go4rom"
 }
