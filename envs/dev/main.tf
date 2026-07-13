@@ -1,4 +1,4 @@
-# ZenPharma Dev Environment — managed via GitHub Actions
+# ZenPharma Dev Environment — managed via GitHub Action
 locals {
   project = "pharma"
   env     = "dev"
