@@ -84,7 +84,7 @@ jobs:
           terraform plan \
             -var="db_password=${{ secrets.DEV_DB_PASSWORD }}" \
             -var="jwt_secret=${{ secrets.DEV_JWT_SECRET }}" \
-            -var="github_org=DPP-2026" \
+            -var="github_org=dheerajvittal" \
             -out=tfplan \
             -no-color
         continue-on-error: true
