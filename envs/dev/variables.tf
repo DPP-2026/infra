@@ -19,7 +19,7 @@ variable "github_org" {
 variable "github_org_id" {
   description = "Numeric GitHub organization/owner ID. Fetch via: curl https://api.github.com/orgs/<github_org>"
   type        = string
-  default     = "283630436"
+  default     = "120410183"
 }
 
 variable "github_repo_ids" {
