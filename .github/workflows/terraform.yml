@@ -1,6 +1,6 @@
 name: Terraform Infrastructure
 
-# PR to main        → plan only
+# P R to main        → plan only
 # Push/merge to main → plan (auto) → approval gate → apply
 # Manual dispatch    → plan, apply, or destroy dev environment
 
