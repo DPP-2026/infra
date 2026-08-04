@@ -1,4 +1,4 @@
-# ZenPharma Dev Environment — managed via GitHub Actions for CI-CD
+# ZenPharma Dev Environment — managed via GitHub Actions for CICD
 locals {
   project = "pharma"
   env     = "dev"
