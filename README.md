@@ -47,7 +47,7 @@ AWS Account (us-east-1)
 │
 ├── VPC  (10.0.0.0/16)
 │   ├── Public Subnets        10.0.1.0/24  (us-east-1a)  ]  NAT Gateway,
-│   │                         10.0.2.0/24  (us-east-1b)  ]  NLB, Ingress
+│   │                         10.0.2.0/24  (us-east-1b)  ]  ALB, Ingress
 │   ├── Private EKS Subnets   10.0.3.0/24  (us-east-1a)  ]  EKS worker
 │   │                         10.0.4.0/24  (us-east-1b)  ]  nodes (private)
 │   └── Private RDS Subnets   10.0.5.0/24  (us-east-1a)  ]  RDS PostgreSQL
@@ -87,11 +87,15 @@ AWS Account (us-east-1)
 │   ├── EKS Cluster Role          (allows EKS control plane to manage AWS resources)
 │   ├── EKS Node Group Role       (allows worker nodes to pull from ECR, join cluster)
 │   │
-│   ├── GitHub Actions OIDC Role  (pharma-dev-gitlab-runner-role)
-│   │   ├── Trust policy : repo zen-pharma-frontend and zen-pharma-backend only
+│   ├── GitHub Actions OIDC Role  (pharma-dev-github-actions-role)
+│   │   ├── Trust policy : repo zen-pharma-frontend, zen-pharma-backend, zen-pharma-backend-lab1 only
 │   │   └── Permissions  : ECR push/pull, EKS describe
 │   │   └── How it works : GitHub OIDC token -> AWS STS -> short-lived credentials
 │   │                      No AWS_ACCESS_KEY_ID stored in GitHub
+│   │
+│   ├── ALB Controller IRSA Role  (pharma-dev-alb-controller-role)
+│   │   ├── Trust policy : EKS service account kube-system/aws-load-balancer-controller
+│   │   └── Permissions  : elasticloadbalancing:*, ec2:Describe*, ec2 SG mgmt (creates/manages ALBs from Ingress)
 │   │
 │   ├── ESO IRSA Role             (pharma-dev-eso-role)
 │   │   ├── Trust policy : EKS service account external-secrets/external-secrets
@@ -150,7 +154,7 @@ for this cluster, not a hardcoded ARN.
 Internet
     |
     v
-AWS Network Load Balancer  (created by NGINX Ingress Controller Helm chart)
+AWS Application Load Balancer  (created per-Ingress by the AWS Load Balancer Controller)
     |  routes by URL path
     |-- /          -->  pharma-ui       (React, port 80)
     |-- /api/*     -->  api-gateway     (port 8080)
@@ -216,7 +220,7 @@ PR reviewed and merged to main
 Infrastructure updated in AWS
     |
     v
-EKS cluster is ready for Stage 2 (install NGINX Ingress, ArgoCD, ESO)
+EKS cluster is ready for Stage 2 (install AWS Load Balancer Controller, ArgoCD, ESO)
 ```
 
 ---
@@ -225,7 +229,7 @@ EKS cluster is ready for Stage 2 (install NGINX Ingress, ArgoCD, ESO)
 
 | Decision | Why |
 |---|---|
-| Worker nodes in private subnets | Nodes not reachable from internet; only NLB is public |
+| Worker nodes in private subnets | Nodes not reachable from internet; only the ALB is public |
 | RDS in private subnets | Database never exposed to internet; only EKS nodes can connect (port 5432 via SG rule) |
 | No static AWS keys in GitHub CI | GitHub Actions uses OIDC; credentials are short-lived (1 hour) and scoped to specific repos |
 | IRSA for pods | Pods never hold AWS credentials; they exchange a projected K8s token for short-lived STS credentials |
@@ -438,6 +442,47 @@ variable "github_org" {
 ```
 
 Do the same in `envs/qa/variables.tf` and `envs/prod/variables.tf`.
+
+#### GitHub's immutable OIDC `sub` claims (post 2026-07-15)
+
+GitHub [tightened OIDC token security on 2026-07-15](https://docs.github.com/en/actions/how-tos/secure-your-work/security-harden-deployments/oidc-in-aws):
+repositories created after that date (or opted in to immutable subject claims) mint
+tokens whose `sub` claim embeds the numeric owner and repository IDs instead of the
+mutable org/repo name — `repo:org@<org_id>/repo@<repo_id>:ref:refs/heads/<branch>`. The
+AWS trust policy in `modules/iam/github-actions-oidc.tf` matches on this immutable
+format, so `github_org_id` and `github_repo_ids` must be set to **your** fork's actual
+numeric IDs — the trust policy will silently reject every workflow run otherwise.
+
+Fetch them from the GitHub REST API:
+
+```bash
+# Org/owner ID
+curl -s https://api.github.com/orgs/YOUR-GITHUB-USERNAME | jq .id
+
+# Repo IDs (one per repo)
+curl -s https://api.github.com/repos/YOUR-GITHUB-USERNAME/zen-pharma-frontend | jq .id
+curl -s https://api.github.com/repos/YOUR-GITHUB-USERNAME/zen-pharma-backend | jq .id
+curl -s https://api.github.com/repos/YOUR-GITHUB-USERNAME/zen-pharma-backend-lab1 | jq .id
+```
+
+If your account is a user (not an org), use `https://api.github.com/users/YOUR-GITHUB-USERNAME`
+instead of `/orgs/...`.
+
+Then update the defaults in `envs/dev/variables.tf`:
+
+```hcl
+variable "github_org_id" {
+  default = "YOUR_ORG_ID"          # ← from /orgs/<org> or /users/<user>
+}
+
+variable "github_repo_ids" {
+  default = {
+    "zen-pharma-frontend"     = "YOUR_FRONTEND_REPO_ID"
+    "zen-pharma-backend"      = "YOUR_BACKEND_REPO_ID"
+    "zen-pharma-backend-lab1" = "YOUR_BACKEND_LAB1_REPO_ID"
+  }
+}
+```
 
 ### 7.3 Update the GitHub Actions Workflow
 
@@ -687,7 +732,7 @@ All 5 repositories have:
 
 ### 12.5 GitHub Actions OIDC
 
-The IAM module creates a GitHub Actions OIDC role that allows CI/CD pipelines in `zen-pharma-frontend` and `zen-pharma-backend` to push images to ECR **without storing AWS credentials in GitHub Secrets**.
+The IAM module creates a GitHub Actions OIDC role that allows CI/CD pipelines in `zen-pharma-frontend`, `zen-pharma-backend`, and `zen-pharma-backend-lab1` to push images to ECR **without storing AWS credentials in GitHub Secrets**.
 
 How it works:
 1. GitHub mints a short-lived OIDC token per workflow run
@@ -696,8 +741,10 @@ How it works:
 4. CI uses these credentials to push images to ECR
 
 The role is restricted to:
-- Only `YOUR-GITHUB-USERNAME/zen-pharma-frontend` and `YOUR-GITHUB-USERNAME/zen-pharma-backend` repos
+- Only `YOUR-GITHUB-USERNAME/zen-pharma-frontend`, `YOUR-GITHUB-USERNAME/zen-pharma-backend`, and `YOUR-GITHUB-USERNAME/zen-pharma-backend-lab1` repos
 - Only `main` and `develop` branches
+- The exact numeric owner/repo IDs (`github_org_id` / `github_repo_ids`), per GitHub's
+  post-2026-07-15 immutable OIDC `sub` claim format — see [7.2](#72-update-github-organisation-variable)
 
 ---
 

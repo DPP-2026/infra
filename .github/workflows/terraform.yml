@@ -34,6 +34,7 @@ permissions:
 env:
   TF_VERSION: '1.15.6'
   AWS_REGION: us-east-1
+  TF_STATE_BUCKET: zen-pharma-terraform-state-dpp-2026
 
 # Prevent parallel runs on the same branch — avoids state conflicts
 concurrency:
