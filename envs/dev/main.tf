@@ -27,7 +27,7 @@ module "eks" {
   env                = local.env
   vpc_id             = module.vpc.vpc_id
   subnet_ids         = module.vpc.private_subnets
-  kubernetes_version = "1.33"
+  kubernetes_version = "1.35"
   instance_types     = ["t3.small"]
   min_size           = 1
   max_size           = 5
@@ -73,6 +73,8 @@ module "iam" {
   oidc_provider_url = module.eks.cluster_oidc_issuer_url
   aws_account_id    = data.aws_caller_identity.current.account_id
   github_org        = var.github_org
+  github_org_id     = var.github_org_id
+  github_repo_ids   = var.github_repo_ids
 }
 
 module "secrets_manager" {
