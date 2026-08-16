@@ -982,8 +982,9 @@ Only the IAM entity that created the cluster (the CI/CD role or your local user)
 
 ## 16. Interview Preparation
 
-After completing this lab you have built and deployed real infrastructure — not watched a demo. Dedicated interview preparation documents are available in the `docs/` folder:
+After completing this lab you have built and deployed real infrastructure — not watched a demo. Dedicated learning documents are available in the `docs/` folder:
 
+- [Terraform Modules Guide](docs/terraform-modules-guide.md) — step-by-step guide to writing and calling VPC and EKS modules (inputs, outputs, main.tf wiring)
 - [Terraform Interview Questions](docs/terraform-interview-questions.md) — 40 questions covering core concepts, state management, modules, CI/CD pipeline, and real-world scenarios with zen-infra references
 - GitHub Actions Interview Questions — coming soon
 
