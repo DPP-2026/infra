@@ -188,8 +188,8 @@ terraform plan \
   -var="jwt_secret=$(openssl rand -hex 32)"
 
 terraform apply \
-  -var="db_password=ChangeMe123!" \
-  -var="jwt_secret=$(openssl rand -hex 32)"
+  -var='db_password=ChangeMe123!' \
+  -var='jwt_secret=$(openssl rand -hex 32)'
 ```
 
 First full apply: **~20–25 minutes** (EKS + RDS dominate).
