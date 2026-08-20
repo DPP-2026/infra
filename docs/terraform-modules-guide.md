@@ -309,7 +309,7 @@ variable "kubernetes_version" {
 }
 
 variable "instance_types" {
-  description = "EC2 instance types for the node group"
+  description = "Instance types for the node group"
   type        = list(string)
   default     = ["t3.medium"]
 }
@@ -700,4 +700,4 @@ Discussion questions:
 
 ---
 
-*This guide is part of the zen-pharma infra learning path. After modules, see the main [README](../README.md) for provisioning infrastructure end-to-end.*
+*This guide is part of the zen-pharma infra learning path. For hands-on step-by-step labs (create each module in `modules/` and wire from `envs/dev/main.tf`), start with the [Build It Yourself Lab](lab/README.md).*
