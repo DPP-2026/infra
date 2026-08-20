@@ -50,19 +50,27 @@ curl -s https://api.github.com/repos/283630436/zen-pharma-frontend | jq .id
 # Returns: null
 ```
 
-Update `envs/dev/variables.tf` defaults with your values (DPP-2026 example):
+Update the **existing** variables in `envs/dev/variables.tf` from [Lab 0](00-foundation.md) — **do not add new `variable` blocks**. Terraform allows each variable name only once per file.
+
+Change only the `default` values inside the blocks you already have:
 
 ```hcl
 variable "github_org" {
-  default = "DPP-2026"
+  description = "GitHub username or organization"
+  type        = string
+  default     = "DPP-2026"          # ← was YOUR-GITHUB-USERNAME in Lab 0
 }
 
 variable "github_org_id" {
-  default = "283630436"
+  description = "Numeric GitHub org/owner ID"
+  type        = string
+  default     = "283630436"           # ← was empty in Lab 0
 }
 
 variable "github_repo_ids" {
-  default = {
+  description = "Map of repo name to numeric GitHub repo ID"
+  type        = map(string)
+  default = {                         # ← was {} in Lab 0
     "zen-pharma-frontend"     = "1235505603"
     "zen-pharma-backend"      = "1235515471"
     "zen-pharma-backend-lab1" = "1260221715"
@@ -70,7 +78,9 @@ variable "github_repo_ids" {
 }
 ```
 
-If you fork repos under your own org/username, re-run the curl commands with **your** org name and update all three values.
+**Common mistake:** Pasting the block above as *additional* variables causes `Duplicate variable declaration`. If you see that error, delete the second copy and keep one block per variable name.
+
+**Also:** These defaults live in `envs/dev/variables.tf` only — **not** in `modules/iam/variables.tf`. The IAM module declares `github_org` as an input without defaults; the root module passes values via `var.github_org` in the `module "iam"` block.
 
 ---
 
@@ -132,7 +142,9 @@ variable "github_repo_ids" {
 |---|---|---|
 | `oidc_provider_arn`, `oidc_provider_url` | `module.eks` outputs | IRSA trust policies must reference the EKS OIDC provider |
 | `aws_account_id` | `data.aws_caller_identity` | Scopes Secrets Manager and ECR policy ARNs to your account |
-| `github_org`, `github_org_id`, `github_repo_ids` | `envs/dev/variables.tf` | GitHub Actions OIDC trust policy matches token `sub` claims |
+| `github_org`, `github_org_id`, `github_repo_ids` | Passed from root `var.*` | No defaults here — values come from `envs/dev/variables.tf` via the module call |
+
+**Do not** paste the Step 5.1 `envs/dev/variables.tf` defaults into this file — that causes duplicate variable errors.
 
 ---
 
