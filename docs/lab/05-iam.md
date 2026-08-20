@@ -21,34 +21,56 @@
 
 ## Step 5.1 — Fetch GitHub numeric IDs (required for OIDC)
 
-GitHub OIDC tokens include your org and repo **numeric IDs**. Fetch them before writing IAM code:
+GitHub OIDC tokens include your org and repo **numeric IDs**. Fetch them before writing IAM code.
+
+**Important:** The GitHub API uses the org **name** in repo URLs, not the numeric org ID.
 
 ```bash
-# Org/owner ID
-curl -s https://api.github.com/orgs/YOUR-GITHUB-ORG | jq .id
-# For personal accounts: curl -s https://api.github.com/users/YOUR-USERNAME | jq .id
+# ✅ Org/owner numeric ID — use org NAME in the URL
+curl -s https://api.github.com/orgs/DPP-2026 | jq .id
+# Example output: 283630436
 
-# Repo IDs
-curl -s https://api.github.com/repos/YOUR-GITHUB-ORG/zen-pharma-frontend | jq .id
-curl -s https://api.github.com/repos/YOUR-GITHUB-ORG/zen-pharma-backend | jq .id
-curl -s https://api.github.com/repos/YOUR-GITHUB-ORG/zen-pharma-backend-lab1 | jq .id
+# For personal accounts (not an org):
+# curl -s https://api.github.com/users/YOUR-USERNAME | jq .id
+
+# ✅ Repo numeric IDs — use org NAME + repo NAME in the URL
+curl -s https://api.github.com/repos/DPP-2026/zen-pharma-frontend | jq .id
+# Example output: 1235505603
+
+curl -s https://api.github.com/repos/DPP-2026/zen-pharma-backend | jq .id
+# Example output: 1235515471
+
+curl -s https://api.github.com/repos/DPP-2026/zen-pharma-backend-lab1 | jq .id
+# Example output: 1260221715
 ```
 
-Update `envs/dev/variables.tf` defaults with your values:
+```bash
+# ❌ Wrong — numeric org ID does NOT work in the repo URL
+curl -s https://api.github.com/repos/283630436/zen-pharma-frontend | jq .id
+# Returns: null
+```
+
+Update `envs/dev/variables.tf` defaults with your values (DPP-2026 example):
 
 ```hcl
+variable "github_org" {
+  default = "DPP-2026"
+}
+
 variable "github_org_id" {
-  default = "YOUR_ORG_ID"
+  default = "283630436"
 }
 
 variable "github_repo_ids" {
   default = {
-    "zen-pharma-frontend"     = "YOUR_FRONTEND_REPO_ID"
-    "zen-pharma-backend"      = "YOUR_BACKEND_REPO_ID"
-    "zen-pharma-backend-lab1" = "YOUR_BACKEND_LAB1_REPO_ID"
+    "zen-pharma-frontend"     = "1235505603"
+    "zen-pharma-backend"      = "1235515471"
+    "zen-pharma-backend-lab1" = "1260221715"
   }
 }
 ```
+
+If you fork repos under your own org/username, re-run the curl commands with **your** org name and update all three values.
 
 ---
 
@@ -116,6 +138,7 @@ data.aws_caller_identity.current.account_id  ──►  module.iam (policy ARNs)
 
 ```bash
 cd envs/dev
+terraform init
 terraform plan \
   -var="db_password=dummy" \
   -var="jwt_secret=dummy"
