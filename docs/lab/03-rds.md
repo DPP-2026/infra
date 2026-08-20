@@ -264,9 +264,10 @@ output "rds_endpoint" {
 
 ```bash
 cd envs/dev
+terraform init
 terraform plan \
-  -var="db_password=ChangeMe123!" \
-  -var="jwt_secret=dummy-for-now"
+  -var='db_password=ChangeMe123!' \
+  -var='jwt_secret=dummy-for-now'
 ```
 
 ---
