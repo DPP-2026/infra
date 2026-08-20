@@ -143,9 +143,10 @@ module "ecr" {
 
 ```bash
 cd envs/dev
+terraform init
 terraform plan \
-  -var="db_password=dummy" \
-  -var="jwt_secret=dummy"
+  -var='db_password=ChangeMe123!' \
+  -var='jwt_secret=dummy-for-now'
 ```
 
 Expect 18 resources (9 repos + 9 lifecycle policies).
