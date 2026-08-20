@@ -22,6 +22,149 @@
 | Secrets path | `/pharma/dev/*` | `/pharma/stg/*` (automatic via `var.env`) |
 | GitHub Secrets | `DEV_DB_PASSWORD`, `DEV_JWT_SECRET` | `STG_DB_PASSWORD`, `STG_JWT_SECRET` |
 | GitHub Environment | `dev` | `stg` |
+| ECR module | Creates repos (once) | **Omit** — shared repos (see notes below) |
+
+---
+
+## Notes — dev and stg in the same AWS account
+
+In production, dev/stg/prod usually live in **separate AWS accounts** — no naming overlap. For learning, you may use **one account**. Most resources are env-prefixed (`pharma-dev-*` vs `pharma-stg-*`) and work fine. A few need extra care.
+
+### Same account vs separate accounts
+
+```
+Practice (one account)              Real prod (multi-account)
+──────────────────────              ─────────────────────────
+pharma-dev-vpc + pharma-stg-vpc     Each account has its own VPC
+Shared ECR repos                    Each account has its own repos
+One GitHub OIDC provider per URL    One provider per account (natural)
+Must use different VPC CIDRs        CIDR can repeat across accounts
+```
+
+---
+
+### 1. ECR — single repos, build once, deploy many (no conflict if done right)
+
+**Strategy:** One set of ECR repos for all environments. CI builds an image once, then promotes the **same tag** to dev → stg → prod clusters.
+
+```
+CI push  →  ecr.../api-gateway:1.2.3
+                    │
+     ┌──────────────┼──────────────┐
+     ▼              ▼              ▼
+  dev EKS        stg EKS        prod EKS
+ (deploy tag)   (deploy tag)   (deploy tag)
+```
+
+Repo names are **not** env-prefixed (`api-gateway`, not `stg-api-gateway`). That is intentional for promotion.
+
+| | Suggestion |
+|---|---|
+| **Hard conflict** | Running `module "ecr"` in stg after dev → `RepositoryAlreadyExistsException` |
+| **Fix** | **Remove `module "ecr"` from `envs/stg/main.tf`**. Keep ECR only in dev (or a one-time bootstrap). |
+| **Promotion** | Tag images by version/SHA (`:1.2.3`, `:abc123`). Deploy that tag to each cluster via ArgoCD/Helm — not separate repos per env. |
+
+---
+
+### 2. VPC CIDR — variabilised, set per environment in `main.tf`
+
+CIDR ranges are **module inputs**, not hardcoded in `modules/vpc/`. Each environment passes its own values in `envs/<env>/main.tf`:
+
+```hcl
+# modules/vpc/variables.tf exposes:
+#   vpc_cidr, public_subnet_cidrs, private_subnet_cidrs, database_subnet_cidrs
+
+# envs/dev/main.tf
+vpc_cidr = "10.0.0.0/16"
+public_subnet_cidrs = ["10.0.1.0/24", "10.0.2.0/24"]
+# ...
+
+# envs/stg/main.tf — different range, same module
+vpc_cidr = "10.1.0.0/16"
+public_subnet_cidrs = ["10.1.1.0/24", "10.1.2.0/24"]
+# ...
+```
+
+| | Suggestion |
+|---|---|
+| **Hard conflict** | Same CIDR in dev and stg (`10.0.0.0/16` twice) → overlapping networks, routing problems |
+| **Fix** | Use a **unique `/16` per environment** in the same account: dev `10.0.0.0/16`, stg `10.1.0.0/16`, prod `10.2.0.0/16`. No module code changes — only `envs/stg/main.tf`. |
+
+`vpc_cidr` has a default of `10.0.0.0/16` in the module — **always override explicitly** in stg/prod so you do not accidentally reuse dev's range.
+
+---
+
+### 3. GitHub Actions OIDC provider — hard conflict
+
+The IAM module creates an account-level resource:
+
+```hcl
+resource "aws_iam_openid_connect_provider" "github_actions" {
+  url = "https://token.actions.githubusercontent.com"
+}
+```
+
+AWS allows **only one OIDC provider per URL per account**. Dev creates it; stg tries again → **already exists**.
+
+| | Suggestion |
+|---|---|
+| **Hard conflict** | Second `terraform apply` in stg fails on `aws_iam_openid_connect_provider.github_actions` |
+| **Fix (practice)** | After dev exists, **import** the provider into stg state (one-time): |
+
+```bash
+cd envs/stg
+# Get your account ID
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+
+terraform import \
+  'module.iam.aws_iam_openid_connect_provider.github_actions' \
+  "arn:aws:iam::${ACCOUNT_ID}:oidc-provider/token.actions.githubusercontent.com"
+```
+
+Then re-run `terraform plan` — stg should manage the **roles** (`pharma-stg-github-actions-role`, etc.) but treat the OIDC provider as already existing.
+
+| **Fix (real prod)** | Separate AWS accounts — each account gets its own provider naturally. |
+| **Fix (long term)** | Move the GitHub OIDC provider to a one-time **bootstrap** stack applied once per account, not per environment. |
+
+The **IAM roles** (`pharma-dev-*` vs `pharma-stg-*`) do not conflict — only the shared OIDC provider does.
+
+---
+
+### 4. Other hard conflicts — none for most resources
+
+These are **safe** in the same account because names include `var.env`:
+
+| Resource | Dev | Stg | Conflict? |
+|---|---|---|---|
+| VPC | `pharma-dev-vpc` | `pharma-stg-vpc` | No |
+| EKS cluster | `pharma-dev-cluster` | `pharma-stg-cluster` | No |
+| EKS OIDC (IRSA) | Per-cluster URL/ARN | Per-cluster URL/ARN | No |
+| RDS | `pharma-dev-postgres` | `pharma-stg-postgres` | No |
+| Secrets Manager | `/pharma/dev/*` | `/pharma/stg/*` | No |
+| IAM IRSA roles | `pharma-dev-eso-role` | `pharma-stg-eso-role` | No |
+| Terraform state | `envs/dev/terraform.tfstate` | `envs/stg/terraform.tfstate` | No (different S3 keys) |
+
+---
+
+### 5. Soft conflicts — not apply errors, but watch out
+
+| Topic | What happens | Suggestion |
+|---|---|---|
+| **Cost** | Two VPCs → two NAT gateways, two EKS clusters, two RDS | Expect ~2× dev spend; destroy stg when not in use |
+| **Service quotas** | More VPCs/EKS clusters per region | Usually fine for 2 envs; check AWS quotas if scaling up |
+| **Wrong directory** | `terraform apply` from `envs/dev` when you meant stg | Always `cd envs/stg` first; use separate GitHub workflow jobs |
+| **Shared secrets confusion** | App points at dev DB instead of stg | Use `/pharma/stg/*` secrets and stg-only `STG_*` GitHub Secrets |
+| **Parallel applies** | Two workflows lock the same state file | Separate concurrency groups per env (`terraform-stg-*`) |
+
+---
+
+### Quick checklist before first stg apply
+
+- [ ] Unique VPC CIDR in `envs/stg/main.tf` (not `10.0.0.0/16`)
+- [ ] **`module "ecr"` removed** from stg — shared repos, build once / deploy many
+- [ ] Separate state key `envs/stg/terraform.tfstate`
+- [ ] Plan to **import** GitHub OIDC provider if dev IAM module already ran
+- [ ] Separate `STG_DB_PASSWORD` / `STG_JWT_SECRET` (never reuse dev passwords)
 
 ---
 
@@ -134,23 +277,8 @@ module "rds" {
   instance_class             = "db.t3.small"               # ← staging sizing
 }
 
-module "ecr" {
-  source = "../../modules/ecr"
-
-  project = local.project
-  env     = local.env
-  repositories = [
-    "api-gateway",
-    "auth-service",
-    "drug-catalog-service",
-    "inventory-service",
-    "manufacturing-service",
-    "notification-service",
-    "pharma-ui",
-    "supplier-service",
-    "qc-service",
-  ]
-}
+# ECR — omit in stg. Single repos shared across envs (build once, deploy many).
+# Dev already created api-gateway, auth-service, etc.
 
 module "iam" {
   source = "../../modules/iam"
@@ -177,19 +305,7 @@ module "secrets_manager" {
 }
 ```
 
-### ECR note — same AWS account
-
-ECR repository names in this project are **not** prefixed with the environment (e.g. `api-gateway`, not `stg-api-gateway`). If dev already created them, staging `terraform apply` will fail with "repository already exists".
-
-**Options:**
-
-| Approach | When to use |
-|---|---|
-| **Remove `module "ecr"` from `envs/stg/main.tf`** | Staging uses the same image repos as dev (most common) |
-| **Import existing repos** into stg state | Advanced — only if you need stg state to track them |
-| **Rename repos per env** | Requires changing the ECR module — not needed for this lab |
-
-For learning, **remove the ECR module block from stg** if dev already provisioned the repos.
+See **[Notes — dev and stg in the same AWS account](#notes--dev-and-stg-in-the-same-aws-account)** for ECR promotion, CIDR inputs, GitHub OIDC import, and other conflicts.
 
 ---
 
@@ -298,7 +414,9 @@ Open a PR → plan runs for both `envs/dev` and `envs/stg` (if workflow updated)
 | Folder exists | `envs/dev/` | `envs/stg/` |
 | State key | `envs/dev/terraform.tfstate` | `envs/stg/terraform.tfstate` |
 | `local.env` | `"dev"` | `"stg"` |
-| VPC CIDR unique | ✅ | ✅ (different range) |
+| VPC CIDR unique | ✅ `10.0.0.0/16` in `main.tf` | ✅ `10.1.0.0/16` in `main.tf` |
+| ECR module | Creates repos | **Omitted** (shared) |
+| GitHub OIDC provider | Creates (once) | Import into stg state |
 | Modules unchanged | ✅ | ✅ |
 | Secrets in GitHub | `DEV_*` | `STG_*` |
 | GitHub Environment | `dev` | `stg` |
@@ -314,9 +432,10 @@ For production with HA and stricter controls, continue to [Lab 9 — Production]
 
 ## Checkpoint
 
-- [ ] `envs/stg/` created with unique backend key and VPC CIDR
+- [ ] `envs/stg/` created with unique backend key and VPC CIDR in `main.tf`
 - [ ] `local.env = "stg"` in main.tf and providers.tf
-- [ ] ECR module removed or handled if repos already exist from dev
+- [ ] **`module "ecr"` removed** — shared repos, build once / deploy many
+- [ ] GitHub OIDC provider imported into stg state if dev IAM already applied
 - [ ] `terraform plan` in `envs/stg/` shows new resources only
 - [ ] GitHub Secrets `STG_DB_PASSWORD` and `STG_JWT_SECRET` set
 - [ ] GitHub Environment `stg` created with required reviewer
