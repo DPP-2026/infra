@@ -153,13 +153,65 @@ jobs:
 
       - name: Terraform Apply
         run: terraform apply -auto-approve -no-color tfplan
+
+  destroy:
+    name: Terraform Destroy
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'workflow_dispatch' &&
+      github.event.inputs.action == 'destroy' &&
+      github.event.inputs.confirm_destroy == 'destroy'
+    environment: dev
+    defaults:
+      run:
+        working-directory: envs/dev
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Destroy
+        run: |
+          terraform destroy \
+            -var="db_password=${{ secrets.DEV_DB_PASSWORD }}" \
+            -var="jwt_secret=${{ secrets.DEV_JWT_SECRET }}" \
+            -var="github_org=${{ vars.GH_ORG }}" \
+            -auto-approve \
+            -no-color
+
+      - name: Release state lock on failure
+        if: failure() || cancelled()
+        run: |
+          aws s3 rm s3://${{ vars.TF_STATE_BUCKET }}/envs/dev/terraform.tfstate.tflock || true
 ```
 
 **Replace:**
 - `TF_STATE_BUCKET` — your S3 bucket name (must match `backend.tf`)
-- `github_org=YOUR-GITHUB-ORG` — your GitHub org or username
+- `github_org=YOUR-GITHUB-ORG` — your GitHub org or username (plan/apply jobs)
 
-See the full workflow (including destroy job and state lock cleanup) in [`.github/workflows/terraform.yml`](../../.github/workflows/terraform.yml).
+**Destroy job notes:**
+
+| Line | Purpose |
+|---|---|
+| `if: workflow_dispatch && action == destroy && confirm_destroy == destroy` | Destroy runs **only** when you manually trigger it and type `destroy` to confirm — never on push/merge |
+| `environment: dev` | Same approval gate as apply — a human must approve before resources are deleted |
+| `terraform destroy` (not `tfplan`) | Destroy does not use the saved plan file; it removes all resources in state |
+| `Release state lock on failure` | Cleans up S3 state lock if the job fails mid-run |
+
+See the full workflow (including plan job state lock cleanup) in [`.github/workflows/terraform.yml`](../../.github/workflows/terraform.yml).
 
 ---
 
@@ -291,7 +343,8 @@ Approve at the `dev` environment gate. Wait ~15–20 minutes.
 | Question | Answer |
 |---|---|
 | Why plan on PR but apply only on main? | Review changes before anything touches AWS |
-| Why upload `tfplan` as artifact? | Apply runs exactly what was planned — no drift |
+| Why upload `tfplan` as artifact? | Apply runs exactly what was planned — no drift between review and apply |
+| Why destroy skips the plan file? | Destroy removes resources; it uses `terraform destroy` directly, not a saved plan |
 | Why `environment: dev`? | Manual approval gate before destructive/ costly changes |
 | Why static AWS keys in GitHub Secrets for infra CI? | Bootstrap — app repos later use OIDC role from Lab 5 |
 | Why `paths` filter? | Workflow only runs when Terraform files change |
